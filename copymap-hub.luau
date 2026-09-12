@@ -3961,7 +3961,7 @@ local function copymaphub(CustomOptions, CustomOptions2)
 		-- On StreamingEnabled maps the client only has chunks near the camera/character
 		-- loaded. StreamingSweep = true moves the camera through the loaded area
 		-- (re-sweeping as it grows) to force far chunks in so the full map gets saved.
-		StreamingSweep = true,
+		StreamingSweep = false,
 
 		IsolateLocalPlayer = false, --  #service.StarterGui:GetChildren() == 0
 		IsolateLocalPlayerCharacter = false,
