@@ -4938,6 +4938,15 @@ local function copymaphub(CustomOptions, CustomOptions2)
 	local GHPPersisted = {}
 	local GHPVersionKey
 	local GHPShadowed = true -- true when ghp returns the shadowed (parent) property value instead of the shadow
+	-- These datatypes are commonly misread or unreadable via gethiddenproperty on
+	-- many executors (they return nil or wrong values and get flagged "failed").
+	-- For these, prefer the UGC fallback read (gethiddenproperty_fallback) and only
+	-- flag them as failed if that fallback also cannot read the value.
+	local GHP_FALLBACK_FIRST = {
+		Color3uint8 = true,
+		NetAssetRef = true,
+		OptionalCoordinateFrame = true,
+	}
 
 	do
 		local execName, execVersion = "UNKNOWN", "0"
@@ -4957,6 +4966,11 @@ local function copymaphub(CustomOptions, CustomOptions2)
 			if ok and type(decoded) == "table" and type(decoded[GHPVersionKey]) == "table" then
 				GHPPersisted = decoded[GHPVersionKey]
 			end
+			-- Purge stale cached failures for the fallback-first types; they are now
+			-- read via the fallback chain instead of gethiddenproperty.
+			for valueType in GHP_FALLBACK_FIRST do
+				GHPPersisted[valueType] = nil
+			end
 		end
 	end
 
@@ -4968,6 +4982,9 @@ local function copymaphub(CustomOptions, CustomOptions2)
 	end
 
 	local function ghpDatatypeAllowed(valueType)
+		if GHP_FALLBACK_FIRST[valueType] then
+			return false -- prefer the fallback read for these; the fallback chain reports success/failure
+		end
 		local state = GHPDatatypeState[valueType]
 		if state ~= nil then
 			return state
@@ -4992,6 +5009,9 @@ local function copymaphub(CustomOptions, CustomOptions2)
 	end
 
 	local function ghpDatatypeReport(valueType, ok)
+		if GHP_FALLBACK_FIRST[valueType] then
+			return -- handled by the fallback chain; not tracked as failed
+		end
 		local wantState = ok and "ok" or "failed"
 		if GHPPersisted[valueType] == wantState then
 			return
