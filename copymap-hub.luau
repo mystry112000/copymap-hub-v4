@@ -3958,6 +3958,10 @@ local function copymaphub(CustomOptions, CustomOptions2)
 		IgnoreNotArchivable = true,
 		IgnorePropertiesOfNotScriptsOnScriptsMode = false,
 		IgnoreSpecialProperties = false,
+		-- On StreamingEnabled maps the client only has chunks near the camera/character
+		-- loaded. StreamingSweep = true moves the camera through the loaded area
+		-- (re-sweeping as it grows) to force far chunks in so the full map gets saved.
+		StreamingSweep = true,
 
 		IsolateLocalPlayer = false, --  #service.StarterGui:GetChildren() == 0
 		IsolateLocalPlayerCharacter = false,
@@ -4547,6 +4551,80 @@ local function copymaphub(CustomOptions, CustomOptions2)
 	local RenderStepped = service.RunService.RenderStepped
 	local function wait_for_render()
 		pcall(RenderStepped.Wait, RenderStepped) -- ? Needed for at least 1fps (status text); pcall due to "thread cannot be yielded to Wait"
+	end
+
+	-- Forces streaming-only chunks to load by sweeping the camera through the loaded
+	-- area (and re-sweeping as it grows), so the full map is available to be saved.
+	local function streamingSweep()
+		local Workspace = service.Workspace
+		if not OPTIONS.StreamingSweep or not Workspace.StreamingEnabled then
+			return
+		end
+
+		local cam = Workspace.CurrentCamera
+		if not cam then
+			return
+		end
+
+		local Math_Huge = math.huge
+		local STEP = 500 -- studs between sweep positions; keep below the client's streaming radius
+		local MAX_PASSES = 8 -- stop early once a pass stops growing the loaded bounds
+		local YIELD = 0.2 -- seconds parked on each position so chunks stream in
+
+		local function loadedBounds()
+			local minX, minY, minZ = Math_Huge, Math_Huge, Math_Huge
+			local maxX, maxY, maxZ = -Math_Huge, -Math_Huge, -Math_Huge
+			local count = 0
+			for _, desc in Workspace:GetDescendants() do
+				if desc:IsA("BasePart") then
+					local pos = desc.Position
+					local size = desc.Size * 0.5
+					for _, corner in { pos + size, pos - size } do
+						minX = math.min(minX, corner.X)
+						minY = math.min(minY, corner.Y)
+						minZ = math.min(minZ, corner.Z)
+						maxX = math.max(maxX, corner.X)
+						maxY = math.max(maxY, corner.Y)
+						maxZ = math.max(maxZ, corner.Z)
+					end
+					count += 1
+				end
+			end
+			return count, minX, minY, minZ, maxX, maxY, maxZ
+		end
+
+		local camCF, camSubject, camType = cam.CFrame, cam.CameraSubject, cam.CameraType
+		local pcall_cam = pcall(function()
+			cam.CameraType = Enum.CameraType.Scriptable
+		end)
+
+		local topY = workspace.FallenPartsDestroyHeight or 0
+		local prevCount = -1
+		for pass = 1, MAX_PASSES do
+			local count, minX, minY, minZ, maxX, maxY, maxZ = loadedBounds()
+			if count == 0 or count == prevCount then
+				break -- nothing new to sweep toward
+			end
+			prevCount = count
+
+			for z = minZ, maxZ, STEP do
+				for x = minX, maxX, STEP do
+					pcall_cam = pcall(function()
+						cam.CFrame = CFrame.new(x, topY, z)
+					end)
+					task.wait(YIELD)
+					wait_for_render()
+				end
+			end
+		end
+
+		if pcall_cam then
+			pcall(function()
+				cam.CameraType = camType
+				cam.CameraSubject = camSubject
+				cam.CFrame = camCF
+			end)
+		end
 	end
 
 	local IsLoading, LoadingText, LoadingThread = false
@@ -6107,6 +6185,10 @@ local function copymaphub(CustomOptions, CustomOptions2)
 				allRoots[#allRoots + 1] = root
 			end
 		end
+
+		-- StreamingEnabled maps only keep nearby chunks loaded; sweep the camera over
+		-- the loaded bounds (growing each pass) so far chunks stream in before collect.
+		streamingSweep()
 
 		local ctx = collect(allRoots)
 
